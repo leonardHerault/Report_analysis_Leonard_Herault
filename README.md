@@ -28,5 +28,5 @@ docker pull leonardherault/seurat-extended:latest
 4.   Run the analysis inside this docker container (being at the root of the repository):
 
 ``` bash
-docker run -it --rm     -v $(pwd):/workspace     -w /workspace     seurat-extended     Rscript -e 'rmarkdown::render("Report_analysis_Leonard_Herault.Rmd")'
+docker run -it --rm -v $(pwd):/workspace -w /workspace leonardherault/seurat-extended Rscript -e 'rmarkdown::render("Report_analysis_Leonard_Herault.Rmd")'
 ```
