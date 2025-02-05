@@ -12,7 +12,7 @@ The HTML report of the analysis is available [here](./Report_analysis_Leonard_He
 git clone https://github.com/leonardHerault/Report_analysis_Leonard_Herault.git
 ```
 
-2.  Place the `seurat_subset_test.rds`object at the root of repository. For example:
+2.  Place the `seurat_subset_test.rds` object at the root of repository. For example:
 
 ``` bash
 cd Report_analysis_Leonard_Herault
@@ -25,7 +25,7 @@ cp <your_path_to_seurat_data_dir>/seurat_subset_test.rds ./
 docker pull leonardherault/seurat-extended:latest
 ```
 
-4.   Run the analysis inside this docker container (being at the root of the repository):
+4.  Run the analysis inside this docker container (being at the root of the repository):
 
 ``` bash
 docker run -it --rm -v $(pwd):/workspace -w /workspace leonardherault/seurat-extended Rscript -e 'rmarkdown::render("Report_analysis_Leonard_Herault.Rmd")'

@@ -16,7 +16,7 @@ editor_options:
 
 # Setup
 
-Figures and table are saved in the `./figures/` and `./tables/` directories, respectively.
+Figures and tables are saved in the `./figures/` and `./tables/` directories, respectively.
 
 ```{r folders_structure}
 
@@ -143,7 +143,7 @@ cortical development (week 16, 20, 21 and 24). There appear to be 2 replicates f
 
 
 table(sobj$sample_batch,sobj$sample_time)
-table(sobj$sample_cellLine,sobj$sample_time) #this two annotation are equivalent
+table(sobj$sample_cellLine,sobj$sample_time) #these two annotation are equivalent
 
 
 DimPlot(sobj,group.by = c("sample_sampleId_short","sample_time",
