@@ -1,0 +1,325 @@
+---
+title: "Analysis Report"
+author: "Leonard Herault"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    code_folding: show
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Setup
+
+Figures and table are saved in the `./figures/` and `./tables/` directories, respectively.
+
+```{r folders_structure}
+
+# Define folders structure and create folders if needed
+figures_dir <- "./figures/"
+tables_dir <- "./tables/"
+dir.create(figures_dir,showWarnings = F)
+dir.create(tables_dir,showWarnings = F)
+
+```
+
+## Parameters
+
+We set some parameters for rendering.
+
+```{r setup}
+
+knitr::opts_chunk$set(
+                      # Display PNG but also keep PDF (reverse the order for PDF outputs)
+                      dev = c("png", "pdf"), 
+                      # In general, keep all the figures produced in a chunk
+                      fig.keep = "all",      
+                      # Save all figures
+                      fig.path = figures_dir, 
+                      dpi = 72,
+                      fig.width = 14, fig.height = 10,
+                      # Cache chunk results and use cache if the chunk hasn't
+                      # been changed since last rendering
+                      cache = FALSE)
+
+options(repr.plot.width = 14, repr.plot.height = 10)
+
+
+```
+
+## Library loading
+
+We need ggplot2 and patchwork for the plot as well as biomaRt for gene ids conversion.
+
+```{r}
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(biomaRt)
+```
+
+## Color palettes
+
+We set two colorblind-friendly palettes for the plots.
+```{r}
+small_color_pal <- ggthemes::colorblind_pal()(8)
+large_color_pal <- c("#F7F398", "#AA9A59", "#E63863", "#ff6db6", "#91D0BE", "#F3B1A0", "#57C3F3", "#AB3282", "#BD956A", 
+                     "#8C549C", "#6778AE", "#F1BB72", "#53A85F", "#9FA3A8", "#712820", "#58A4C3", "#E0D4CA", "#E4C755",
+                     "#8C9A69", "#F28D35", "#44A08D", "#E6A8D7", "#D9B0C4")
+```
+
+## Data loading
+
+We load the Seurat object containing processed scRNA-seq data.
+```{r}
+sobj <- readRDS("seurat_subset_test.rds")
+```
+
+# Data exploration
+
+## Seurat object characteristics
+
+This Seurat object contains 5,000 cells within 4 assays
+
+-   standard RNA expression assay
+
+-   Spliced, spliced, unspliced and ambiguous transcript expression
+    assays that have certainly been obtained using the velocyto tool.
+    They can be used to investigate cell dynamics with a RNA velocity
+    analysis.
+
+```{r}
+sobj
+```
+
+The RNA slot has been processed with a standard Seurat workflow to
+obtain a pca latent space from 2000 Highly variable genes which was used
+to cluster the cells and produce a UMAP visualization.
+
+```{r}
+names(sobj@commands)
+```
+
+## Cell type annotation
+
+We can assume that the cell type annotation present in the object is derived from this analysis. This cell type annotation presents 2 clusters of interneurons, the cell type of interest.
+
+```{r cell_type_annotation, fig.width=  14, fig.height = 14}
+col_cell_type <- large_color_pal
+names(col_cell_type) <- levels(sobj$Manual_type)
+
+df_cluster_type <- unique(sobj@meta.data[,c("Manual_type","seurat_clusters")])
+
+
+col_clusters <- large_color_pal
+names(col_clusters) <- df_cluster_type[order(df_cluster_type$Manual_type),"seurat_clusters"]
+
+plot_manual_type <- DimPlot(sobj,group.by = c("Manual_type"),cols = col_cell_type) 
+plot_clusters <- DimPlot(sobj,group.by = c("seurat_clusters"),cols = col_clusters) 
+wrap_plots(plot_manual_type,plot_clusters,ncol = 1)
+```
+
+## Other cell annotations
+
+The metadata contains other cell annotations.
+
+```{r}
+sobj@meta.data[] <- lapply(sobj@meta.data, function(x) if(is.character(x)) as.factor(x) else x)
+summary(sobj@meta.data)
+barplot(summary(sobj@meta.data$sample_sampleId_short))
+
+
+```
+
+In summary we have 8 samples profiled at 4 different time points of the
+cortical development (week 16, 20, 21 and 24). There appear to be 2 replicates for each time point. The cells are also annotated for 3 different batches and two different assays (RNA v3, RNA NG).
+
+```{r cell_metadata}
+
+
+table(sobj$sample_batch,sobj$sample_time)
+table(sobj$sample_cellLine,sobj$sample_time) #this two annotation are equivalent
+
+
+DimPlot(sobj,group.by = c("sample_sampleId_short","sample_time",
+                          "sample_assay","sample_batch"),cols = small_color_pal)
+
+```
+
+The cells cluster by batch on the UMAP visualization questioning the
+reliability of the given cell annotation. The batch annotation partially
+overlaps with the assay and sample time annotations. We have here a
+highly complex experimental design with potential batch effect that will
+be highly difficult to distinguish from meaningful biological
+variations during the cortical development.
+
+**Further information about how this data were generated is needed to
+decide whether or not a batch correction should be implemented and at
+which level(s) (sample, batch, assay).**
+
+```{r}
+table(sobj$sample_batch,sobj$sample_time)
+table(sobj$sample_batch,sobj$sample_assay)
+```
+
+## Quality control
+
+As we only have the Seurat object, we don't have the capture and
+sequencing reports that would allow us to have a complete view of the
+data quality. We can still perform basic quality control.
+
+### Cell quality
+
+We create a new RNA assay with ENSG ids converted to HGNC gene names
+keeping only genes with at least one count.
+
+```{r basic_qc_violin }
+rna_with_hgnc <- sobj[["RNA"]]$counts[rowSums(sobj[["RNA"]]$counts) > 0,]
+                         
+                         
+mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"),verbose = F)
+ensg_to_hgnc <- getBM(filters= "ensembl_gene_id", 
+                      attributes= c("ensembl_gene_id","hgnc_symbol"),
+                      values=rownames(rna_with_hgnc),
+                      mart= mart,
+                      verbose = F)
+
+duplicated_ensg <- ensg_to_hgnc$ensembl_gene_id[duplicated(ensg_to_hgnc$ensembl_gene_id)]
+ensg_to_hgnc[ensg_to_hgnc$ensembl_gene_id == duplicated_ensg,] 
+# when more than one gene name is found we keep only the first one
+ensg_to_hgnc <- ensg_to_hgnc[!duplicated(ensg_to_hgnc),]
+
+rna_with_hgnc <- rna_with_hgnc[ensg_to_hgnc$ensembl_gene_id,]
+ensg_to_hgnc$gene_name <- ensg_to_hgnc$hgnc_symbol
+# we keep ensg id when no gene name is available
+ensg_to_hgnc$gene_name[ensg_to_hgnc$gene_name == ""] <- ensg_to_hgnc$ensembl_gene_id[ensg_to_hgnc$gene_name == ""]
+rownames(rna_with_hgnc) <- make.unique(ensg_to_hgnc$gene_name)
+
+sobj[["RNA_HGNC"]] <- CreateAssay5Object(counts = rna_with_hgnc)
+DefaultAssay(sobj) <- "RNA_HGNC"
+sobj <- NormalizeData(sobj)
+
+Idents(sobj) <- "orig.ident"
+
+# We have a percentRibo stat computed on the whole dataset (not subsetted)
+# We can recompute this stat for the subssetted dataset
+# We can also add the stat for the percentage of mitochondrial transcripts
+sobj[["percent.mt"]] <- PercentageFeatureSet(sobj, pattern = "^MT-")
+sobj[["percent.ribo"]] <- PercentageFeatureSet(sobj, pattern = "^RPS|^RPL")
+
+
+VlnPlot(sobj, features = c("nFeature_RNA", "nCount_RNA","percent.mt","percent.ribo"), ncol = 2)
+```
+
+We have many cells with high percentages (\> 15 %) of counts originating
+from mitochondrial (or ribosomal) transcripts. These cells are
+potentially of bad quality and should be filtered.
+
+```{r}
+min(sobj$nFeature_RNA)
+max(sobj$nFeature_RNA)
+min(sobj$nCount_RNA)
+max(sobj$nCount_RNA)
+```
+
+Furthermore, some cells with a high number of detected genes could be doublets. A cutoff of a minimum of 501 detected genes appears to have been applied to this dataset.
+
+**Further clarification is needed regarding how genes and cells were filtered, if at all. These preliminary results suggest that many low-quality cells may still be present. We can consider applying commonly used thresholds for the metrics mentioned above to retain only high-quality cells.**
+
+Additional advanced quality controls, such as automated doublet detection, could also be performed to further exclude dubious cells.
+
+### Cell Cycle
+
+Using signatures provided by Seurat, we can assign each cell to a specific cell cycle phase (G2M/S or G1/G0) to assess potential confounding effects of the cell cycle on the processed data.
+
+```{r cell_cycle,  fig.width=  14, fig.height = 14}
+s_genes <- cc.genes$s.genes
+g2m_genes <- cc.genes$g2m.genes
+sobj <- CellCycleScoring(sobj, s.features = s_genes, g2m.features = g2m_genes, set.ident = TRUE)
+p1 <- DimPlot(sobj,group.by = "Phase",cols = small_color_pal[2:4]) 
+p2 <- DimPlot(sobj,group.by = c("Manual_type"),cols = col_cell_type,label = T,repel = T) 
+
+wrap_plots(p1,p2,ncol = 1)
+```
+
+**Radial glia and progenitor cells cluster by cell cycle phase in this processed dataset, suggesting that the cell cycle is a major driver of gene expression in these cell types, potentially obscuring finer biological differences.**
+
+This issue can be addressed using various approaches, with cell cycle regression being the most common.
+
+# Data analysis : Molecular Characterization of Interneurons
+
+Given the primary focus on interneurons, I propose starting with an initial analysis that relies on the provided annotations to identify markers for the different annotated cell types, particularly for the two interneuron clusters.
+
+## Marker analysis
+
+```{r markers}
+## RNA_HGNC assay has been normalized before
+Idents(sobj) <- "Manual_type"
+all_markers <- FindAllMarkers(sobj, only.pos = T,logfc.threshold = 0.25,min.pct = 0.1,verbose = F)
+all_markers <- all_markers[all_markers$p_val_adj <0.05,]
+write.csv(all_markers,file = "./tables/all_markers_original_anno.csv",quote = F,row.names = F)
+
+all_markers[all_markers$cluster == "Interneurons 1",]
+
+```
+
+```{r}
+all_markers[all_markers$cluster == "Interneurons 2",]
+```
+
+We can plot known interneuron markers from the literature, identified through this analysis, such as DLX genes, CXCR4, or ERBB4.
+
+```{r common_interneuron_markers}
+common_interneuron_markers <- intersect(all_markers[all_markers$cluster == "Interneurons 2","gene"],
+          all_markers[all_markers$cluster == "Interneurons 1","gene"])
+common_interneuron_markers
+FeaturePlot(sobj, features = c("DLX1","DLX2","CXCR4","ERBB4"),reduction = "umap")
+```
+
+
+## Differentially Expressed Genes (DEG) between interneuron clusters 1 and 2
+
+We can already observe expression differences for some genes between the two interneuron clusters. Let’s identify all differentially expressed genes between interneuron clusters 1 and 2.
+
+```{r deg_interneurons_1_vs_2}
+DEG_interneurons_1_vs_2 <- FindMarkers(sobj, ident.1 = "Interneurons 1",ident.2 = "Interneurons 2",
+                                       logfc.threshold = 0.25,min.pct = 0.1) 
+DEG_interneurons_1_vs_2 <- DEG_interneurons_1_vs_2[DEG_interneurons_1_vs_2$p_val_adj < 0.05,]
+DEG_interneurons_1_vs_2$cluster <- "Up in Interneurons 1"
+DEG_interneurons_1_vs_2$cluster[sign(DEG_interneurons_1_vs_2$avg_log2FC) < 0] <- "Up in Interneurons 2"
+write.csv(DEG_interneurons_1_vs_2,
+          file = "./tables/deg_interneurons_1_vs_2_original_anno.csv",quote = F)
+
+DEG_interneurons_1_vs_2
+```
+
+We can plot the top three significantly highly expressed genes for each interneuron type
+
+```{r top_deg_interneurons1_vs_2, fig.height = 5, fig.width=5.5}
+top_interneurons_1 <- rownames(DEG_interneurons_1_vs_2[DEG_interneurons_1_vs_2$cluster ==  "Up in Interneurons 1",])[1:3]
+top_interneurons_2 <- rownames(DEG_interneurons_1_vs_2[DEG_interneurons_1_vs_2$cluster ==  "Up in Interneurons 2",])[1:3]
+
+VlnPlot(sobj[,sobj$Manual_type %in% c("Interneurons 1","Interneurons 2")],features = c(top_interneurons_1,top_interneurons_2),cols = col_cell_type,stack = T,fill.by = "ident",flip = T)
+```
+
+The two interneuron clusters exhibit clear differences in gene expression. Further DEG analysis could be conducted to investigate changes in gene expression between these two clusters at different time points during cortical development. This will require careful consideration of the complex experimental design, for example, by using EdgeR with pseudobulks of the different samples.
+
+RNA velocity analysis, combined with pseudotime analysis, could provide valuable insights into common or distinct progenitors for these two types of interneurons during cortical development. However, this will be a highly challenging analysis due to the experimental design and the batch effects observed in the processed data.
+
+# Conclusion
+
+Overall, this processed data presents a complex design with confounding factors, including batch effects at different levels and cell cycle. No corrections appear to have been applied during the processing of this data to obtain the cell type annotations.
+
+If the two clusters annotated as interneurons exhibit known markers, I would like to discuss whether a complete reanalysis of this data—ideally starting from the raw FASTQ files (which were not provided)—should be performed, with potential corrections for confounding factors. This would allow for more reliable and potentially finer annotations of the interneuron subtypes. Such a reanalysis could serve as the basis for the more advanced analyses discussed above.
+
+### Session info
+
+```{r}
+sessionInfo()
+```
+
