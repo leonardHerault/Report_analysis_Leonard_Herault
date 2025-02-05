@@ -2,7 +2,7 @@
 
 ## Report
 
-The HTML report of the analysis is available [here](./Report_analysis_Leonard_Herault.html). We can download the file (Download raw file button) and open it with a web browser.
+The HTML report of the analysis is available [here](./Report_analysis_Leonard_Herault.html). The file can be downloaded (Download raw file button) and opened with a web browser.
 
 ## Reproduce the analysis
 
